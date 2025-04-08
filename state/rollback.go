@@ -124,3 +124,104 @@ func Rollback(bs BlockStore, ss Store, removeBlock bool) (int64, []byte, error) 
 
 	return rolledBackState.LastBlockHeight, rolledBackState.AppHash, nil
 }
+
+var ErrTargetHeightNotFound = errors.New("rollback height not found")
+
+func RollbackTo(bs BlockStore, ss Store, targetHeight int64) (int64, []byte, error) {
+	currentState, err := ss.Load()
+	if err != nil {
+		return -1, nil, err
+	}
+	if currentState.IsEmpty() {
+		return -1, nil, errors.New("no state found")
+	}
+
+	// state store height is equal to blockstore height. We're good to proceed with rolling back state
+	// rollbackHeight := invalidState.LastBlockHeight - 1
+	rollbackHeight := targetHeight
+	rollbackBlock := bs.LoadBlockMeta(rollbackHeight)
+	if rollbackBlock == nil {
+		return -1, nil, ErrTargetHeightNotFound
+	}
+
+	// We also need to retrieve the latest block because the app hash and last
+	// results hash is only agreed upon in the following block.
+	latestHeight := rollbackHeight + 1
+	latestBlock := bs.LoadBlockMeta(latestHeight)
+	if latestBlock == nil {
+		return -1, nil, fmt.Errorf("block at height %d not found", rollbackHeight+1)
+	}
+
+	previousLastValidatorSet, err := ss.LoadValidators(rollbackHeight)
+	if err != nil {
+		return -1, nil, err
+	}
+	nextValidators, err := ss.LoadValidators(latestHeight)
+	if err != nil {
+		return -1, nil, fmt.Errorf("load validators failed, height: %d, err : %w", latestHeight, err)
+	}
+
+	previousParams, err := ss.LoadConsensusParams(rollbackHeight + 1)
+	if err != nil {
+		return -1, nil, err
+	}
+
+	nextHeight := rollbackHeight + 1
+	valChangeHeight := currentState.LastHeightValidatorsChanged
+	// this can only happen if the validator set changed since the last block
+	if valChangeHeight > nextHeight+1 {
+		valChangeHeight = nextHeight + 1
+	}
+
+	paramsChangeHeight := currentState.LastHeightConsensusParamsChanged
+	// this can only happen if params changed from the last block
+	if paramsChangeHeight > rollbackHeight {
+		paramsChangeHeight = rollbackHeight + 1
+	}
+
+	// build the new state from the old state and the prior block
+	rolledBackState := State{
+		Version: cmtstate.Version{
+			Consensus: cmtversion.Consensus{
+				Block: version.BlockProtocol,
+				App:   previousParams.Version.App,
+			},
+			Software: version.TMCoreSemVer,
+		},
+		// immutable fields
+		ChainID:       currentState.ChainID,
+		InitialHeight: currentState.InitialHeight,
+
+		LastBlockHeight: rollbackBlock.Header.Height,
+		LastBlockID:     rollbackBlock.BlockID,
+		LastBlockTime:   rollbackBlock.Header.Time,
+
+		NextValidators:              nextValidators,
+		Validators:                  nextValidators,
+		LastValidators:              previousLastValidatorSet,
+		LastHeightValidatorsChanged: valChangeHeight,
+
+		ConsensusParams:                  previousParams,
+		LastHeightConsensusParamsChanged: paramsChangeHeight,
+
+		LastResultsHash: latestBlock.Header.LastResultsHash,
+		AppHash:         latestBlock.Header.AppHash,
+	}
+
+	// persist the new state. This overrides the invalid one. NOTE: this will also
+	// persist the validator set and consensus params over the existing structures,
+	// but both should be the same
+	if err := ss.Save(rolledBackState); err != nil {
+		return -1, nil, fmt.Errorf("failed to save rolled back state: %w", err)
+	}
+
+	// If removeBlock is true then also remove the block associated with the previous state.
+	// This will mean both the last state and last block height is equal to n - 1
+	for bs.Height() > targetHeight {
+		if err := bs.DeleteLatestBlock(); err != nil {
+			return -1, nil, fmt.Errorf("failed to remove final block from blockstore: %w", err)
+		}
+	}
+
+	return rolledBackState.LastBlockHeight, rolledBackState.AppHash, nil
+}
