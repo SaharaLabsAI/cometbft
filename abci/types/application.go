@@ -26,6 +26,8 @@ type Application interface {
 	VerifyVoteExtension(context.Context, *RequestVerifyVoteExtension) (*ResponseVerifyVoteExtension, error)
 	// Commit the state and return the application Merkle root hash
 	Commit(context.Context, *RequestCommit) (*ResponseCommit, error)
+	// Rollback the CMS state
+	RollbackCMS(context.Context, *RequestRollbackCMS) (*ResponseRollbackCMS, error)
 
 	// State Sync Connection
 	ListSnapshots(context.Context, *RequestListSnapshots) (*ResponseListSnapshots, error)                // List available snapshots
@@ -116,4 +118,8 @@ func (BaseApplication) FinalizeBlock(_ context.Context, req *RequestFinalizeBloc
 	return &ResponseFinalizeBlock{
 		TxResults: txs,
 	}, nil
+}
+
+func (BaseApplication) RollbackCMS(_ context.Context, _ *RequestRollbackCMS) (*ResponseRollbackCMS, error) {
+	return &ResponseRollbackCMS{}, nil
 }

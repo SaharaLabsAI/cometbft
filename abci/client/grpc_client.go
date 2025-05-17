@@ -245,3 +245,7 @@ func (cli *grpcClient) VerifyVoteExtension(ctx context.Context, req *types.Reque
 func (cli *grpcClient) FinalizeBlock(ctx context.Context, req *types.RequestFinalizeBlock) (*types.ResponseFinalizeBlock, error) {
 	return cli.client.FinalizeBlock(ctx, types.ToRequestFinalizeBlock(req).GetFinalizeBlock(), grpc.WaitForReady(true))
 }
+
+func (cli *grpcClient) RollbackCMS(ctx context.Context, req *types.RequestRollbackCMS) (*types.ResponseRollbackCMS, error) {
+	return cli.client.RollbackCMS(ctx, types.ToRequestRollbackCMS(req).GetRollbackCms(), grpc.WaitForReady(true))
+}

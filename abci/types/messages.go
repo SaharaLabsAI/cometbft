@@ -124,6 +124,12 @@ func ToRequestFinalizeBlock(req *RequestFinalizeBlock) *Request {
 	}
 }
 
+func ToRequestRollbackCMS(req *RequestRollbackCMS) *Request {
+	return &Request{
+		Value: &Request_RollbackCms{req},
+	}
+}
+
 //----------------------------------------
 
 func ToResponseException(errStr string) *Response {

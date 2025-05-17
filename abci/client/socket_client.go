@@ -412,6 +412,17 @@ func (cli *socketClient) FinalizeBlock(ctx context.Context, req *types.RequestFi
 	return reqRes.Response.GetFinalizeBlock(), cli.Error()
 }
 
+func (cli *socketClient) RollbackCMS(ctx context.Context, req *types.RequestRollbackCMS) (*types.ResponseRollbackCMS, error) {
+	reqRes, err := cli.queueRequest(ctx, types.ToRequestRollbackCMS(req))
+	if err != nil {
+		return nil, err
+	}
+	if err := cli.Flush(ctx); err != nil {
+		return nil, err
+	}
+	return reqRes.Response.GetRollbackCms(), cli.Error()
+}
+
 func (cli *socketClient) queueRequest(ctx context.Context, req *types.Request) (*ReqRes, error) {
 	reqres := NewReqRes(req)
 

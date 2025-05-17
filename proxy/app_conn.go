@@ -24,6 +24,7 @@ type AppConnConsensus interface {
 	VerifyVoteExtension(context.Context, *types.RequestVerifyVoteExtension) (*types.ResponseVerifyVoteExtension, error)
 	FinalizeBlock(context.Context, *types.RequestFinalizeBlock) (*types.ResponseFinalizeBlock, error)
 	Commit(context.Context) (*types.ResponseCommit, error)
+	RollbackCMS(context.Context) (*types.ResponseRollbackCMS, error)
 }
 
 type AppConnMempool interface {
@@ -107,6 +108,11 @@ func (app *appConnConsensus) FinalizeBlock(ctx context.Context, req *types.Reque
 func (app *appConnConsensus) Commit(ctx context.Context) (*types.ResponseCommit, error) {
 	defer addTimeSample(app.metrics.MethodTimingSeconds.With("method", "commit", "type", "sync"))()
 	return app.appConn.Commit(ctx, &types.RequestCommit{})
+}
+
+func (app *appConnConsensus) RollbackCMS(ctx context.Context) (*types.ResponseRollbackCMS, error) {
+	defer addTimeSample(app.metrics.MethodTimingSeconds.With("method", "rollback_cms", "type", "sync"))()
+	return app.appConn.RollbackCMS(ctx, &types.RequestRollbackCMS{})
 }
 
 //------------------------------------------------

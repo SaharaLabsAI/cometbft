@@ -3,6 +3,7 @@ package blocksync
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -66,18 +67,20 @@ type Reactor struct {
 	switchToConsensusMs int
 
 	metrics *Metrics
+
+	autoFixApphash bool
 }
 
 // NewReactor returns new reactor instance.
 func NewReactor(state sm.State, blockExec *sm.BlockExecutor, store *store.BlockStore,
-	blockSync bool, metrics *Metrics, offlineStateSyncHeight int64,
+	blockSync bool, metrics *Metrics, offlineStateSyncHeight int64, autoFixApphash bool,
 ) *Reactor {
-	return NewReactorWithAddr(state, blockExec, store, blockSync, nil, metrics, offlineStateSyncHeight)
+	return NewReactorWithAddr(state, blockExec, store, blockSync, nil, metrics, offlineStateSyncHeight, autoFixApphash)
 }
 
 // Function added to keep existing API.
 func NewReactorWithAddr(state sm.State, blockExec *sm.BlockExecutor, store *store.BlockStore,
-	blockSync bool, localAddr crypto.Address, metrics *Metrics, offlineStateSyncHeight int64,
+	blockSync bool, localAddr crypto.Address, metrics *Metrics, offlineStateSyncHeight int64, autoFixApphash bool,
 ) *Reactor {
 
 	storeHeight := store.Height()
@@ -109,15 +112,16 @@ func NewReactorWithAddr(state sm.State, blockExec *sm.BlockExecutor, store *stor
 	pool := NewBlockPool(startHeight, requestsCh, errorsCh)
 
 	bcR := &Reactor{
-		initialState: state,
-		blockExec:    blockExec,
-		store:        store,
-		pool:         pool,
-		blockSync:    blockSync,
-		localAddr:    localAddr,
-		requestsCh:   requestsCh,
-		errorsCh:     errorsCh,
-		metrics:      metrics,
+		initialState:   state,
+		blockExec:      blockExec,
+		store:          store,
+		pool:           pool,
+		blockSync:      blockSync,
+		localAddr:      localAddr,
+		requestsCh:     requestsCh,
+		errorsCh:       errorsCh,
+		metrics:        metrics,
+		autoFixApphash: autoFixApphash,
 	}
 	bcR.BaseReactor = *p2p.NewBaseReactor("Reactor", bcR)
 	return bcR
@@ -499,6 +503,46 @@ FOR_LOOP:
 			if err == nil {
 				// validate the block before we persist it
 				err = bcR.blockExec.ValidateBlock(state, first)
+				if bcR.autoFixApphash && err != nil && strings.Contains(err.Error(), "wrong Block.Header.AppHash") {
+					bcR.Logger.Error("meet apphash mismatch, try to auto fix by rollback", "state.AppHash", fmt.Sprintf("%X", state.AppHash), "state_height", state.LastBlockHeight)
+					// get the last block
+					lastBlock := bcR.store.LoadBlock(first.Height - 1)
+					lastBlockMeta := bcR.store.LoadBlockMeta(first.Height - 1)
+
+					// rollback the last block
+					_, _, innerErr := sm.Rollback(bcR.store, bcR.blockExec.Store(), false)
+					if innerErr != nil {
+						bcR.Logger.Error("rollback failed during fix app hash mismatch", "err", innerErr)
+					} else {
+						bcR.Logger.Info("rollback cometbft finished")
+					}
+
+					state, innerErr = bcR.blockExec.Store().Load()
+					if innerErr != nil {
+						bcR.Logger.Error("reload state failed during fix app hash mismatch", "err", innerErr)
+					} else {
+						bcR.Logger.Info("reload state after rollback", "new_app_hash", fmt.Sprintf("%X", state.AppHash), "height", state.LastBlockHeight)
+					}
+
+					// rollback cms
+					cmsHeight, innerErr := bcR.blockExec.RollbackCMS()
+					if innerErr != nil {
+						bcR.Logger.Error("rollback cms failed", "err", innerErr)
+					} else {
+						bcR.Logger.Info("rollback cms finished", "cms_height", cmsHeight)
+					}
+
+					// replay the last block
+					state, innerErr = bcR.blockExec.ApplyBlockForFixApphash(state, lastBlockMeta.BlockID, lastBlock)
+					if innerErr != nil {
+						bcR.Logger.Error("replay the last block failed", "height", first.Height-1, "err", innerErr)
+					} else {
+						bcR.Logger.Info("replayed the last block", "height", state.LastBlockHeight, "app_hash_after_fix", fmt.Sprintf("%X", state.AppHash))
+					}
+
+					// validate this block again
+					err = bcR.blockExec.ValidateBlock(state, first)
+				}
 			}
 			presentExtCommit := extCommit != nil
 			extensionsEnabled := state.ConsensusParams.ABCI.VoteExtensionsEnabled(first.Height)

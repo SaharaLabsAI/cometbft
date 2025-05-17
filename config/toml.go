@@ -357,8 +357,8 @@ type = "flood"
 recheck = {{ .Mempool.Recheck }}
 
 # recheck_timeout is the time the application has during the rechecking process
-# to return CheckTx responses, once all requests have been sent. Responses that 
-# arrive after the timeout expires are discarded. It only applies to 
+# to return CheckTx responses, once all requests have been sent. Responses that
+# arrive after the timeout expires are discarded. It only applies to
 # non-local ABCI clients and when recheck is enabled.
 #
 # The ideal value will strongly depend on the application. It could roughly be estimated as the
@@ -468,6 +468,8 @@ chunk_fetchers = "{{ .StateSync.ChunkFetchers }}"
 #
 #   1) "v0" - the default block sync implementation
 version = "{{ .BlockSync.Version }}"
+
+auto_fix_app_hash = "{{ .BlockSync.AutoFixApphash }}"
 
 #######################################################
 ###         Consensus Configuration Options         ###

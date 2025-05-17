@@ -199,7 +199,7 @@ func (blockExec *BlockExecutor) ValidateBlock(state State, block *types.Block) e
 func (blockExec *BlockExecutor) ApplyVerifiedBlock(
 	state State, blockID types.BlockID, block *types.Block,
 ) (State, error) {
-	return blockExec.applyBlock(state, blockID, block)
+	return blockExec.applyBlock(state, blockID, block, false)
 }
 
 // ApplyBlock validates the block against the state, executes it against the app,
@@ -216,10 +216,40 @@ func (blockExec *BlockExecutor) ApplyBlock(
 		return state, ErrInvalidBlock(err)
 	}
 
-	return blockExec.applyBlock(state, blockID, block)
+	return blockExec.applyBlock(state, blockID, block, false)
 }
 
-func (blockExec *BlockExecutor) applyBlock(state State, blockID types.BlockID, block *types.Block) (State, error) {
+func (blockExec *BlockExecutor) ApplyBlockForFixApphash(
+	state State, blockID types.BlockID, block *types.Block,
+) (State, error) {
+
+	if err := validateBlock(state, block); err != nil {
+		return state, ErrInvalidBlock(err)
+	}
+
+	return blockExec.applyBlock(state, blockID, block, true)
+}
+
+func (blockExec *BlockExecutor) RollbackCMS() (int64, error) {
+
+	resp, err := blockExec.proxyApp.RollbackCMS(context.TODO())
+	if err != nil {
+		blockExec.logger.Error(
+			"rollback cms failed",
+			"rollback_to", resp.RollbackToHeight,
+			"err", err,
+		)
+		return resp.RollbackToHeight, err
+	}
+	blockExec.logger.Info(
+		"rollback cms finished",
+		"rollback_to", resp.RollbackToHeight,
+	)
+
+	return resp.RollbackToHeight, nil
+}
+
+func (blockExec *BlockExecutor) applyBlock(state State, blockID types.BlockID, block *types.Block, fixAppHashMismatch bool) (State, error) {
 	startTime := time.Now().UnixNano()
 	abciResponse, err := blockExec.proxyApp.FinalizeBlock(context.TODO(), &abci.RequestFinalizeBlock{
 		Hash:               block.Hash(),
@@ -293,7 +323,9 @@ func (blockExec *BlockExecutor) applyBlock(state State, blockID types.BlockID, b
 	}
 
 	// Update evpool with the latest state.
-	blockExec.evpool.Update(state, block.Evidence.Evidence)
+	if !fixAppHashMismatch {
+		blockExec.evpool.Update(state, block.Evidence.Evidence)
+	}
 
 	fail.Fail() // XXX
 
