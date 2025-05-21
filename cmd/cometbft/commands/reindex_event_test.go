@@ -71,7 +71,7 @@ func TestReIndexEventCheckHeight(t *testing.T) {
 		startHeight = tc.startHeight
 		endHeight = tc.endHeight
 
-		err := checkValidHeight(mockBlockStore)
+		_, _, err := checkValidHeight(mockBlockStore, startHeight, endHeight)
 		if tc.validHeight {
 			require.NoError(t, err)
 		} else {
@@ -181,7 +181,7 @@ func TestReIndexEvent(t *testing.T) {
 			stateStore:   mockStateStore,
 		}
 
-		err := eventReIndex(setupReIndexEventCmd(), args)
+		err := eventReIndex(setupReIndexEventCmd().Context(), args)
 		if tc.reIndexErr {
 			require.Error(t, err)
 		} else {
