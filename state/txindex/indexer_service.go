@@ -90,6 +90,18 @@ func (is *IndexerService) OnStart() error {
 					}
 				}
 
+				if err = is.txIdxr.AddBatch(batch); err != nil {
+					is.Logger.Error("failed to index block txs", "height", height, "err", err)
+					if is.terminateOnError {
+						if err := is.Stop(); err != nil {
+							is.Logger.Error("failed to stop", "err", err)
+						}
+						return
+					}
+				} else {
+					is.Logger.Debug("indexed transactions", "height", height, "num_txs", numTxs)
+				}
+
 				if err := is.blockIdxr.Index(eventNewBlockEvents); err != nil {
 					is.Logger.Error("failed to index block", "height", height, "err", err)
 					if is.terminateOnError {
@@ -102,17 +114,6 @@ func (is *IndexerService) OnStart() error {
 					is.Logger.Info("indexed block events", "height", height)
 				}
 
-				if err = is.txIdxr.AddBatch(batch); err != nil {
-					is.Logger.Error("failed to index block txs", "height", height, "err", err)
-					if is.terminateOnError {
-						if err := is.Stop(); err != nil {
-							is.Logger.Error("failed to stop", "err", err)
-						}
-						return
-					}
-				} else {
-					is.Logger.Debug("indexed transactions", "height", height, "num_txs", numTxs)
-				}
 			}
 		}
 	}()

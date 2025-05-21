@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -37,9 +38,9 @@ var ReIndexEventCmd = &cobra.Command{
 	Short:   "reindex events to the event store backends",
 	Long: `
 reindex-event is an offline tooling to re-index block and tx events to the eventsinks,
-you can run this command when the event store backend dropped/disconnected or you want to 
-replace the backend. The default start-height is 0, meaning the tooling will start 
-reindex from the base block height(inclusive); and the default end-height is 0, meaning 
+you can run this command when the event store backend dropped/disconnected or you want to
+replace the backend. The default start-height is 0, meaning the tooling will start
+reindex from the base block height(inclusive); and the default end-height is 0, meaning
 the tooling will reindex until the latest block height(inclusive). User can omit
 either or both arguments.
 
@@ -53,43 +54,56 @@ want to use this command.
 	cometbft reindex-event --start-height 2 --end-height 10
 	`,
 	Run: func(cmd *cobra.Command, args []string) {
-		bs, ss, err := loadStateAndBlockStore(config)
+		startHeight, endHeight, err := ReIndexEvent(cmd.Context(), config, startHeight, endHeight)
 		if err != nil {
-			fmt.Println(reindexFailed, err)
-			return
+			fmt.Printf("event re-index failed from %d to %d, err: %s", startHeight, endHeight, err.Error())
+		} else {
+			fmt.Printf("event re-index finished from %d to %d", startHeight, endHeight)
 		}
-
-		state, err := ss.Load()
-		if err != nil {
-			fmt.Println(reindexFailed, err)
-			return
-		}
-
-		if err := checkValidHeight(bs); err != nil {
-			fmt.Println(reindexFailed, err)
-			return
-		}
-
-		bi, ti, err := loadEventSinks(config, state.ChainID)
-		if err != nil {
-			fmt.Println(reindexFailed, err)
-			return
-		}
-
-		riArgs := eventReIndexArgs{
-			startHeight:  startHeight,
-			endHeight:    endHeight,
-			blockIndexer: bi,
-			txIndexer:    ti,
-			blockStore:   bs,
-			stateStore:   ss,
-		}
-		if err := eventReIndex(cmd, riArgs); err != nil {
-			panic(fmt.Errorf("%s: %w", reindexFailed, err))
-		}
-
-		fmt.Println("event re-index finished")
 	},
+}
+
+func ReIndexEvent(ctx context.Context, config *cmtcfg.Config, startHeight, endHeight int64) (int64, int64, error) {
+	bs, ss, err := loadStateAndBlockStore(config)
+	if err != nil {
+		fmt.Println(reindexFailed, err)
+		return startHeight, endHeight, err
+	}
+	defer func() {
+		_ = bs.Close()
+		_ = ss.Close()
+	}()
+
+	state, err := ss.Load()
+	if err != nil {
+		fmt.Println(reindexFailed, err)
+		return startHeight, endHeight, err
+	}
+
+	startHeight, endHeight, err = checkValidHeight(bs, startHeight, endHeight)
+	if err != nil {
+		fmt.Println(reindexFailed, err)
+		return startHeight, endHeight, err
+	}
+
+	bi, ti, err := loadEventSinks(config, state.ChainID)
+	if err != nil {
+		fmt.Println(reindexFailed, err)
+		return startHeight, endHeight, err
+	}
+
+	riArgs := eventReIndexArgs{
+		startHeight:  startHeight,
+		endHeight:    endHeight,
+		blockIndexer: bi,
+		txIndexer:    ti,
+		blockStore:   bs,
+		stateStore:   ss,
+	}
+	if err := eventReIndex(ctx, riArgs); err != nil {
+		panic(fmt.Errorf("%s: %w", reindexFailed, err))
+	}
+	return startHeight, endHeight, err
 }
 
 var (
@@ -139,16 +153,16 @@ type eventReIndexArgs struct {
 	stateStore   state.Store
 }
 
-func eventReIndex(cmd *cobra.Command, args eventReIndexArgs) error {
+func eventReIndex(ctx context.Context, args eventReIndexArgs) error {
 	var bar progressbar.Bar
 	bar.NewOption(args.startHeight-1, args.endHeight)
 
-	fmt.Println("start re-indexing events:")
+	fmt.Printf("start re-indexing events from %d to %d \n", args.startHeight, args.endHeight)
 	defer bar.Finish()
 	for height := args.startHeight; height <= args.endHeight; height++ {
 		select {
-		case <-cmd.Context().Done():
-			return fmt.Errorf("event re-index terminated at height %d: %w", height, cmd.Context().Err())
+		case <-ctx.Done():
+			return fmt.Errorf("event re-index terminated at height %d: %w", height, ctx.Err())
 		default:
 			block := args.blockStore.LoadBlock(height)
 			if block == nil {
@@ -200,7 +214,7 @@ func eventReIndex(cmd *cobra.Command, args eventReIndexArgs) error {
 	return nil
 }
 
-func checkValidHeight(bs state.BlockStore) error {
+func checkValidHeight(bs state.BlockStore, startHeight, endHeight int64) (int64, int64, error) {
 	base := bs.Base()
 
 	if startHeight == 0 {
@@ -209,14 +223,14 @@ func checkValidHeight(bs state.BlockStore) error {
 	}
 
 	if startHeight < base {
-		return fmt.Errorf("%s (requested start height: %d, base height: %d)",
+		return startHeight, endHeight, fmt.Errorf("%s (requested start height: %d, base height: %d)",
 			ErrHeightNotAvailable, startHeight, base)
 	}
 
 	height := bs.Height()
 
 	if startHeight > height {
-		return fmt.Errorf(
+		return startHeight, endHeight, fmt.Errorf(
 			"%s (requested start height: %d, store height: %d)", ErrHeightNotAvailable, startHeight, height)
 	}
 
@@ -226,15 +240,15 @@ func checkValidHeight(bs state.BlockStore) error {
 	}
 
 	if endHeight < base {
-		return fmt.Errorf(
+		return startHeight, endHeight, fmt.Errorf(
 			"%s (requested end height: %d, base height: %d)", ErrHeightNotAvailable, endHeight, base)
 	}
 
 	if endHeight < startHeight {
-		return fmt.Errorf(
+		return startHeight, endHeight, fmt.Errorf(
 			"%s (requested the end height: %d is less than the start height: %d)",
 			ErrInvalidRequest, startHeight, endHeight)
 	}
 
-	return nil
+	return startHeight, endHeight, nil
 }
