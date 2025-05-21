@@ -330,6 +330,22 @@ func NewNodeWithContext(ctx context.Context,
 		return nil, err
 	}
 
+	// check if the last block event lost
+	lastBlockHeight := state.LastBlockHeight
+	if lastBlockHeight > 0 {
+		has, err := blockIndexer.Has(lastBlockHeight)
+		if err != nil {
+			logger.Error("check whether block event has been indexed failed", "err", err)
+		} else if !has {
+			err := sm.IndexBlockAndTxsByNumber(blockStore, stateStore, blockIndexer, txIndexer, lastBlockHeight)
+			if err != nil {
+				logger.Error("reIndex the last block event and tx events failed", "err", err, "height", lastBlockHeight)
+			} else {
+				logger.Info("reIndexed the last block event and tx events", "height", lastBlockHeight)
+			}
+		}
+	}
+
 	// If an address is provided, listen on the socket for a connection from an
 	// external signing process.
 	if config.PrivValidatorListenAddr != "" {
