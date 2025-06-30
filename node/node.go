@@ -332,7 +332,8 @@ func NewNodeWithContext(ctx context.Context,
 
 	// check if the last block event lost
 	lastBlockHeight := state.LastBlockHeight
-	if lastBlockHeight > 0 {
+	hasBlock := blockStore.LoadBlock(lastBlockHeight) != nil
+	if lastBlockHeight > 0 && hasBlock {
 		has, err := blockIndexer.Has(lastBlockHeight)
 		if err != nil {
 			logger.Error("check whether block event has been indexed failed", "err", err)
